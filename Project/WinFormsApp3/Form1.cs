@@ -5,6 +5,7 @@ using System.Management;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Drawing;
@@ -58,44 +59,148 @@ namespace WinFormsApp3
                 Console.WriteLine("Error closing listener: " + ex.Message);
             }
         }
+        private static readonly string[] EspUsbVendorIds =
+        {
+            "VID_10C4", // Silicon Labs CP210x
+            "VID_1A86", // WCH CH340/CH343
+            "VID_303A", // Espressif native USB (ESP32-S2/S3/C3)
+            "VID_0403", // FTDI
+        };
+
+        private static readonly string[] EspCaptionKeywords =
+        {
+            "CP210", "CH340", "CH343", "CH910", "Silicon Labs", "UART", "ESP32",
+            "USB JTAG", "Enhanced SERIAL",
+        };
+
+        private static string? ExtractComPortFromCaption(string caption)
+        {
+            int start = caption.IndexOf("(COM", StringComparison.OrdinalIgnoreCase);
+            if (start == -1) return null;
+
+            int end = caption.IndexOf(')', start);
+            if (end == -1) return null;
+
+            return caption.Substring(start + 1, end - start - 1);
+        }
+
+        private static bool IsLikelyEsp32SerialDevice(string caption, string pnpDeviceId)
+        {
+            foreach (string vendorId in EspUsbVendorIds)
+            {
+                if (pnpDeviceId.Contains(vendorId, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            foreach (string keyword in EspCaptionKeywords)
+            {
+                if (caption.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
         private string GetEspComPort()
         {
             try
             {
-                using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_PnPEntity WHERE Caption like '%COM%'"))
+                using var searcher = new ManagementObjectSearcher(
+                    "SELECT Caption, PNPDeviceID FROM Win32_PnPEntity WHERE Caption LIKE '%(COM%'");
+
+                foreach (var device in searcher.Get())
                 {
-                    foreach (var device in searcher.Get())
-                    {
-                        string caption = device["Caption"]?.ToString() ?? "";
-                        if (caption.Contains("CP210x") || caption.Contains("CH340") || caption.Contains("USB Serial Device"))
-                        {
-                            int start = caption.IndexOf("(COM");
-                            if (start != -1)
-                            {
-                                int end = caption.IndexOf(")", start);
-                                if (end != -1)
-                                {
-                                    return caption.Substring(start + 1, end - start - 1);
-                                }
-                            }
-                        }
-                    }
+                    string caption = device["Caption"]?.ToString() ?? "";
+                    string pnpDeviceId = device["PNPDeviceID"]?.ToString() ?? "";
+
+                    if (!IsLikelyEsp32SerialDevice(caption, pnpDeviceId))
+                        continue;
+
+                    string? comPort = ExtractComPortFromCaption(caption);
+                    if (!string.IsNullOrEmpty(comPort))
+                        return comPort;
                 }
             }
             catch (ManagementException mEx)
             {
                 Console.WriteLine("WMI Query Failed in port extraction: " + mEx.Message);
             }
+
             return string.Empty;
         }
+
         private void CheckForEsp32Usb()
         {
-            string comPort = GetEspComPort();
+            bool espDetected = !string.IsNullOrEmpty(GetEspComPort());
+            pnlPort.Visible = espDetected;
 
-            if (!string.IsNullOrEmpty(comPort))
-            {
-                pnlPort.Visible = true;
+            if (espDetected)
                 pnlPort.BringToFront();
+        }
+
+        private static bool WaitForSerialToken(SerialPort serial, string token, TimeSpan timeout, out string captured)
+        {
+            captured = string.Empty;
+            var deadline = DateTime.UtcNow.Add(timeout);
+
+            while (DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    captured += serial.ReadExisting();
+                }
+                catch (TimeoutException)
+                {
+                }
+
+                if (captured.Contains(token, StringComparison.Ordinal))
+                    return true;
+
+                Thread.Sleep(50);
+            }
+
+            return false;
+        }
+
+        private bool TryPushConfigToEsp32(string comPort, string ip, string port, out string errorMessage)
+        {
+            errorMessage = string.Empty;
+
+            try
+            {
+                using var serial = new SerialPort(comPort, 115200)
+                {
+                    Encoding = Encoding.UTF8,
+                    NewLine = "\n",
+                    DtrEnable = false,
+                    RtsEnable = false,
+                    ReadTimeout = 500,
+                    WriteTimeout = 3000,
+                };
+
+                serial.Open();
+                // Opening USB-UART often resets the ESP32; wait until firmware prints READY.
+                if (!WaitForSerialToken(serial, "READY", TimeSpan.FromSeconds(12), out string bootLog))
+                {
+                    errorMessage = "ESP32 did not respond after USB connect;
+                    return false;
+                }
+
+                serial.DiscardInBuffer();
+                serial.WriteLine($"CFG:{ip}:{port}");
+
+                if (WaitForSerialToken(serial, "Configuration saved to Flash", TimeSpan.FromSeconds(4), out _))
+                    return true;
+
+                errorMessage = string.IsNullOrWhiteSpace(bootLog)
+                    ? "No confirmation from ESP32"
+                    : "No confirmation from ESP32. Last device output: " + bootLog.Trim();
+                return false;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+                return false;
             }
         }
 
@@ -269,29 +374,42 @@ namespace WinFormsApp3
             }
 
             string comPort = GetEspComPort();
-            if (!string.IsNullOrEmpty(comPort))
+            if (string.IsNullOrEmpty(comPort))
             {
-                try
-                {
-                    using (SerialPort serial = new SerialPort(comPort, 115200))
-                    {
-                        serial.Open();
-                        string configPayload = $"CFG:{ip}:{port}\n";
-                        serial.Write(configPayload);
+                MessageBox.Show(
+                    "PC server settings updated, but no ESP32 USB port was detected. Plug in the board and try again.",
+                    "ESP32 Not Found",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
 
-                        MessageBox.Show($"Configuration saved and pushed to ESP32", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Saved locally but failed sending to ESP32: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                }
+            if (TryPushConfigToEsp32(comPort, ip, port, out string espError))
+            {
+                MessageBox.Show(
+                    $"Configuration saved on PC and written to ESP32 on {comPort}.",
+                    "Success",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            else
+            {
+                MessageBox.Show(
+                    $"PC server settings updated, but ESP32 write failed: {espError}",
+                    "ESP32 Error",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
             }
         }
 
         private void btnPortSave_Click(object sender, EventArgs e)
         {
             ConfigSave();
+            pnlPort.Visible = false;
+        }
+
+        private void btnConfigCl_Click(object sender, EventArgs e)
+        {
             pnlPort.Visible = false;
         }
 

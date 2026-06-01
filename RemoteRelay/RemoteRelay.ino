@@ -46,6 +46,8 @@ void setup() {
   } else {
     Serial.println("\nWiFi setup timed out");
   }
+
+  Serial.println("READY");
 }
 
 void loop() {

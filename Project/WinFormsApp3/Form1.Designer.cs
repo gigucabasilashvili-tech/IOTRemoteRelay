@@ -237,6 +237,7 @@
             pnlPort.Name = "pnlPort";
             pnlPort.Size = new Size(800, 450);
             pnlPort.TabIndex = 10;
+            pnlPort.Visible = false;
             // 
             // btnConfigCl
             // 
@@ -246,6 +247,7 @@
             btnConfigCl.TabIndex = 7;
             btnConfigCl.Text = "Close";
             btnConfigCl.UseVisualStyleBackColor = true;
+            btnConfigCl.Click += btnConfigCl_Click;
             // 
             // lbDPort
             // 
