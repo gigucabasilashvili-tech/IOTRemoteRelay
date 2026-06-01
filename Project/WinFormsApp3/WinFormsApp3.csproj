@@ -14,12 +14,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="HTTP\dashboard.html">
+    <Compile Include="..\..\HTTP\RelayWebHandler.cs" Link="HTTP\RelayWebHandler.cs" />
+    <Compile Include="..\..\HTTP\RelayServerDefaults.cs" Link="HTTP\RelayServerDefaults.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\HTTP\dashboard.html" Link="HTTP\dashboard.html">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="HTTP\styles.css">
+    </Content>
+    <Content Include="..\..\HTTP\styles.css" Link="HTTP\styles.css">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    </Content>
   </ItemGroup>
 
 </Project>

@@ -247,7 +247,7 @@ namespace WinFormsApp3
                 listener.Start();
                 isServerRunning = true;
 
-                lbCnctStRGB.Text = "Waiting for Client...";
+                lbCnctStRGB.Text = "Waiting for ESP32...";
                 lbCnctStRGB.ForeColor = Color.Blue;
 
                 while (isServerRunning)
@@ -277,8 +277,6 @@ namespace WinFormsApp3
                     await reader.ReadToEndAsync();
                 }
 
-                MarkClientConnected();
-
                 await webHandler.HandleAsync(
                     context,
                     () => relayState,
@@ -295,7 +293,7 @@ namespace WinFormsApp3
                         else
                             Apply();
                     },
-                    () => { });
+                    MarkEsp32Connected);
             }
             catch (Exception ex) when (ex is ObjectDisposedException || ex is HttpListenerException)
             {
@@ -310,11 +308,11 @@ namespace WinFormsApp3
             }
         }
 
-        private void MarkClientConnected()
+        private void MarkEsp32Connected()
         {
             void Update()
             {
-                lbCnctStRGB.Text = "Connected";
+                lbCnctStRGB.Text = "ESP32 Connected";
                 lbCnctStRGB.ForeColor = Color.Green;
                 watchdogTimer.Stop();
                 watchdogTimer.Start();
@@ -328,7 +326,7 @@ namespace WinFormsApp3
 
         private void WatchdogTimer_Tick(object? sender, EventArgs e)
         {
-            lbCnctStRGB.Text = "Client Timeout";
+            lbCnctStRGB.Text = "ESP32 Timeout";
             lbCnctStRGB.ForeColor = Color.Red;
             watchdogTimer.Stop();
         }
