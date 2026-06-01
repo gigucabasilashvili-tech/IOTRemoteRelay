@@ -24,8 +24,8 @@ void setup() {
   preferences.begin("config", false);
   
   serverIP = preferences.getString("ip", "192.168.137.1");
-  serverPort = preferences.getString("port", "8080");
-  serverUrl = "http://" + serverIP + ":" + serverPort + "/";
+  serverPort = preferences.getString("port", "65050");
+  serverUrl = "http://" + serverIP + ":" + serverPort + "/status";
   
   preferences.end();
 
@@ -62,7 +62,7 @@ void loop() {
       if (firstColon != -1 && secondColon != -1) {
         serverIP = incomingData.substring(firstColon + 1, secondColon);
         serverPort = incomingData.substring(secondColon + 1);
-        serverUrl = "http://" + serverIP + ":" + serverPort + "/";
+        serverUrl = "http://" + serverIP + ":" + serverPort + "/status";
         
         preferences.begin("config", false);
         preferences.putString("ip", serverIP);

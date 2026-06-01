@@ -4,11 +4,11 @@ using System.IO.Ports;
 using System.Management;
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Drawing;
+using WinFormsApp3.HTTP;
 
 namespace WinFormsApp3
 {
@@ -18,12 +18,7 @@ namespace WinFormsApp3
         private string relayState = "ON";
         private HttpListener? listener;
         private bool isServerRunning = false;
-
-        public class RelayStatus
-        {
-            public string state { get; set; } = "OFF";
-            public string lastUpdate { get; set; } = "";
-        }
+        private readonly RelayWebHandler webHandler = new();
 
         public Form1()
         {
@@ -182,7 +177,7 @@ namespace WinFormsApp3
                 // Opening USB-UART often resets the ESP32; wait until firmware prints READY.
                 if (!WaitForSerialToken(serial, "READY", TimeSpan.FromSeconds(12), out string bootLog))
                 {
-                    errorMessage = "ESP32 did not respond after USB connect;
+                    errorMessage = "ESP32 did not respond after USB connect. Close Serial Monitor and re-flash the firmware if needed.";
                     return false;
                 }
 
@@ -246,7 +241,7 @@ namespace WinFormsApp3
                 if (listener == null)
                 {
                     listener = new HttpListener();
-                    listener.Prefixes.Add("http://*:8080/");
+                    listener.Prefixes.Add($"http://*:{RelayServerDefaults.Port}/");
                 }
 
                 listener.Start();
@@ -282,27 +277,25 @@ namespace WinFormsApp3
                     await reader.ReadToEndAsync();
                 }
 
-                this.Invoke(new Action(() =>
-                {
-                    lbCnctStRGB.Text = "Connected";
-                    lbCnctStRGB.ForeColor = Color.Green;
-                    watchdogTimer.Stop();
-                    watchdogTimer.Start();
-                }));
+                MarkClientConnected();
 
-                var statusObj = new RelayStatus
-                {
-                    state = relayState,
-                    lastUpdate = DateTime.Now.ToString("HH:mm:ss")
-                };
+                await webHandler.HandleAsync(
+                    context,
+                    () => relayState,
+                    newState =>
+                    {
+                        void Apply()
+                        {
+                            relayState = newState;
+                            UpdateRelayUI();
+                        }
 
-                string jsonResponse = JsonSerializer.Serialize(statusObj);
-                byte[] buffer = Encoding.UTF8.GetBytes(jsonResponse);
-
-                context.Response.ContentType = "application/json";
-                context.Response.ContentLength64 = buffer.Length;
-
-                await context.Response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                        if (InvokeRequired)
+                            Invoke(Apply);
+                        else
+                            Apply();
+                    },
+                    () => { });
             }
             catch (Exception ex) when (ex is ObjectDisposedException || ex is HttpListenerException)
             {
@@ -315,6 +308,22 @@ namespace WinFormsApp3
             {
                 try { context.Response.Close(); } catch { }
             }
+        }
+
+        private void MarkClientConnected()
+        {
+            void Update()
+            {
+                lbCnctStRGB.Text = "Connected";
+                lbCnctStRGB.ForeColor = Color.Green;
+                watchdogTimer.Stop();
+                watchdogTimer.Start();
+            }
+
+            if (InvokeRequired)
+                Invoke(Update);
+            else
+                Update();
         }
 
         private void WatchdogTimer_Tick(object? sender, EventArgs e)

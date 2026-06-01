@@ -202,3 +202,5 @@ c:\Users\Giguca_Kun\Downloads\IOTRemoteRelay-main\Project\WinFormsApp3\obj\Debug
 c:\Users\Giguca_Kun\Downloads\IOTRemoteRelay-main\Project\WinFormsApp3\obj\Debug\net10.0-windows\WinFormsApp3.pdb
 c:\Users\Giguca_Kun\Downloads\IOTRemoteRelay-main\Project\WinFormsApp3\obj\Debug\net10.0-windows\WinFormsApp3.genruntimeconfig.cache
 c:\Users\Giguca_Kun\Downloads\IOTRemoteRelay-main\Project\WinFormsApp3\obj\Debug\net10.0-windows\ref\WinFormsApp3.dll
+c:\Users\Giguca_Kun\Downloads\IOTRemoteRelay-main\Project\WinFormsApp3\bin\Debug\net10.0-windows\HTTP\dashboard.html
+c:\Users\Giguca_Kun\Downloads\IOTRemoteRelay-main\Project\WinFormsApp3\bin\Debug\net10.0-windows\HTTP\styles.css

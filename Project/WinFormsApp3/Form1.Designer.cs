@@ -256,7 +256,7 @@
             lbDPort.Name = "lbDPort";
             lbDPort.Size = new Size(100, 15);
             lbDPort.TabIndex = 6;
-            lbDPort.Text = "Default port: 8080";
+            lbDPort.Text = "Default port: 65050";
             // 
             // lbConfig
             // 
@@ -274,6 +274,7 @@
             tbPort.Name = "tbPort";
             tbPort.Size = new Size(282, 23);
             tbPort.TabIndex = 4;
+            tbPort.Text = "65050";
             // 
             // lbPort
             // 
