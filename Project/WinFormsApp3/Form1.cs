@@ -65,7 +65,7 @@ namespace WinFormsApp3
         private static readonly string[] EspCaptionKeywords =
         {
             "CP210", "CH340", "CH343", "CH910", "Silicon Labs", "UART", "ESP32",
-            "USB JTAG", "Enhanced SERIAL",
+            "USB JTAG", "Enhanced SERIAL", "Silicon Labs CP210x USB to UART Bridge", "Silicon Labs"
         };
 
         private static string? ExtractComPortFromCaption(string caption)
@@ -167,13 +167,24 @@ namespace WinFormsApp3
                 {
                     Encoding = Encoding.UTF8,
                     NewLine = "\n",
-                    DtrEnable = false,
-                    RtsEnable = false,
+                    DtrEnable = true,
+                    RtsEnable = true,
                     ReadTimeout = 500,
                     WriteTimeout = 3000,
                 };
 
                 serial.Open();
+
+                // --- AUTOMATIC HARDWARE RESET TOGGLE SEQUENCE ---
+                serial.DtrEnable = false;
+                serial.RtsEnable = true;
+                Thread.Sleep(100);
+
+                serial.DtrEnable = true;
+                serial.RtsEnable = false;
+                Thread.Sleep(100);
+                // ------------------------------------------------
+
                 // Opening USB-UART often resets the ESP32; wait until firmware prints READY.
                 if (!WaitForSerialToken(serial, "READY", TimeSpan.FromSeconds(12), out string bootLog))
                 {
@@ -292,7 +303,8 @@ namespace WinFormsApp3
                             Invoke(Apply);
                         else
                             Apply();
-                    },
+                    }
+                    ,
                     MarkEsp32Connected);
             }
             catch (Exception ex) when (ex is ObjectDisposedException || ex is HttpListenerException)
