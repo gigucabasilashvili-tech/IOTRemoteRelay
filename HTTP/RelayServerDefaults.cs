@@ -2,5 +2,12 @@ namespace WinFormsApp3.HTTP;
 
 public static class RelayServerDefaults
 {
-    public const string Port = "65050";
+    /// <summary>Browser dashboard and mobile web UI.</summary>
+    public const string WebDashboardPort = "8080";
+
+    /// <summary>ESP32 polls /status on this port (public IP + this port saved to device).</summary>
+    public const string EspListenPort = "65050";
+
+    public const string WebUsername = "aboba";
+    public const string WebPassword = "aboba12345";
 }

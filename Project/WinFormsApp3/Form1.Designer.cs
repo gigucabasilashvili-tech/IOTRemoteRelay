@@ -256,7 +256,7 @@
             lbDPort.Name = "lbDPort";
             lbDPort.Size = new Size(100, 15);
             lbDPort.TabIndex = 6;
-            lbDPort.Text = "Default port: 65050";
+            lbDPort.Text = "Web UI: 8080 | ESP32 port: 65050";
             // 
             // lbConfig
             // 

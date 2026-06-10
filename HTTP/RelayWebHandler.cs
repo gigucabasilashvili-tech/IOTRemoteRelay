@@ -20,10 +20,25 @@ public sealed class RelayWebHandler
         HttpListenerContext context,
         Func<string> getRelayState,
         Action<string> setRelayState,
-        Action onEsp32Poll)
+        Action onEsp32Poll,
+        bool requireAuth = false)
     {
         string path = context.Request.Url?.AbsolutePath ?? "/";
         string method = context.Request.HttpMethod;
+
+        // ESP32 device API — no login.
+        if (path.Equals("/status", StringComparison.OrdinalIgnoreCase) && method == "GET")
+        {
+            onEsp32Poll();
+            await ServeStatusJsonAsync(context, getRelayState());
+            return;
+        }
+
+        if (requireAuth && !IsAuthorized(context.Request))
+        {
+            await ServeUnauthorizedAsync(context);
+            return;
+        }
 
         if (path is "/" or "/index.html")
         {
@@ -52,15 +67,48 @@ public sealed class RelayWebHandler
             return;
         }
 
-        // ESP32 polls this endpoint only.
-        if (path.Equals("/status", StringComparison.OrdinalIgnoreCase) && method == "GET")
+        await ServeNotFoundAsync(context);
+    }
+
+    private static bool IsAuthorized(HttpListenerRequest request)
+    {
+        string? authHeader = request.Headers["Authorization"];
+        if (string.IsNullOrEmpty(authHeader) ||
+            !authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
         {
-            onEsp32Poll();
-            await ServeStatusJsonAsync(context, getRelayState());
-            return;
+            return false;
         }
 
-        await ServeNotFoundAsync(context);
+        try
+        {
+            string encoded = authHeader["Basic ".Length..];
+            string decoded = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+            int colonIndex = decoded.IndexOf(':');
+            if (colonIndex < 0)
+                return false;
+
+            string username = decoded[..colonIndex];
+            string password = decoded[(colonIndex + 1)..];
+
+            return username == RelayServerDefaults.WebUsername &&
+                   password == RelayServerDefaults.WebPassword;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    private static async Task ServeUnauthorizedAsync(HttpListenerContext context)
+    {
+        const string body = "Login required";
+        byte[] buffer = Encoding.UTF8.GetBytes(body);
+
+        context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
+        context.Response.Headers.Add("WWW-Authenticate", "Basic realm=\"Relay Control\"");
+        context.Response.ContentType = "text/plain";
+        context.Response.ContentLength64 = buffer.Length;
+        await context.Response.OutputStream.WriteAsync(buffer);
     }
 
     private static void ToggleRelayState(Func<string> getRelayState, Action<string> setRelayState)

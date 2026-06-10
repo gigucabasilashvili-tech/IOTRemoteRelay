@@ -16,7 +16,8 @@ namespace WinFormsApp3
     {
         private System.Windows.Forms.Timer watchdogTimer;
         private string relayState = "ON";
-        private HttpListener? listener;
+        private HttpListener? webListener;
+        private HttpListener? espListener;
         private bool isServerRunning = false;
         private readonly RelayWebHandler webHandler = new();
 
@@ -31,8 +32,10 @@ namespace WinFormsApp3
             pnlLogin.Dock = DockStyle.Fill;
             pnlMain.Dock = DockStyle.Fill;
 
+            tbPort.Text = RelayServerDefaults.EspListenPort;
+
             watchdogTimer = new System.Windows.Forms.Timer();
-            watchdogTimer.Interval = 3000; //3 second timeout
+            watchdogTimer.Interval = 3000;
             watchdogTimer.Tick += WatchdogTimer_Tick;
 
             UpdateRelayUI();
@@ -43,23 +46,15 @@ namespace WinFormsApp3
 
         private void Form1_FormClosing(object? sender, FormClosingEventArgs e)
         {
-            isServerRunning = false;
-            try
-            {
-                listener?.Stop();
-                listener?.Close();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Error closing listener: " + ex.Message);
-            }
+            StopServers();
         }
+
         private static readonly string[] EspUsbVendorIds =
         {
-            "VID_10C4", // Silicon Labs CP210x
-            "VID_1A86", // WCH CH340/CH343
-            "VID_303A", // Espressif native USB (ESP32-S2/S3/C3)
-            "VID_0403", // FTDI
+            "VID_10C4",
+            "VID_1A86",
+            "VID_303A",
+            "VID_0403",
         };
 
         private static readonly string[] EspCaptionKeywords =
@@ -175,7 +170,6 @@ namespace WinFormsApp3
 
                 serial.Open();
 
-                // --- AUTOMATIC HARDWARE RESET TOGGLE SEQUENCE ---
                 serial.DtrEnable = false;
                 serial.RtsEnable = true;
                 Thread.Sleep(100);
@@ -183,9 +177,7 @@ namespace WinFormsApp3
                 serial.DtrEnable = true;
                 serial.RtsEnable = false;
                 Thread.Sleep(100);
-                // ------------------------------------------------
 
-                // Opening USB-UART often resets the ESP32; wait until firmware prints READY.
                 if (!WaitForSerialToken(serial, "READY", TimeSpan.FromSeconds(12), out string bootLog))
                 {
                     errorMessage = "ESP32 did not respond after USB connect. Close Serial Monitor and re-flash the firmware if needed.";
@@ -210,13 +202,14 @@ namespace WinFormsApp3
             }
         }
 
-        private void BtnLogin_Click(object sender, EventArgs e)
+        private async void BtnLogin_Click(object sender, EventArgs e)
         {
             if (tbUsr.Text == "admin" && tbPas.Text == "1234")
             {
                 pnlLogin.Visible = false;
                 pnlMain.Visible = true;
                 CheckForEsp32Usb();
+                await StartServersAsync();
             }
             else
             {
@@ -238,38 +231,64 @@ namespace WinFormsApp3
 
         private async void btnServerStart_Click(object sender, EventArgs e)
         {
+            if (isServerRunning)
+            {
+                StopServers();
+                ResetUI();
+                return;
+            }
+
             lbCnctStRGB.Text = "Starting...";
             lbCnctStRGB.ForeColor = Color.Orange;
             btnServerStart.Enabled = false;
 
-            await ServerStart();
+            await StartServersAsync();
         }
 
-        public async Task ServerStart()
+        private string GetEspListenPort()
         {
+            string port = tbPort.Text.Trim();
+            return string.IsNullOrEmpty(port) ? RelayServerDefaults.EspListenPort : port;
+        }
+
+        public async Task StartServersAsync()
+        {
+            if (isServerRunning)
+                return;
+
             try
             {
-                if (listener == null)
-                {
-                    listener = new HttpListener();
-                    listener.Prefixes.Add($"http://*:{RelayServerDefaults.Port}/");
-                }
+                StopListenersOnly();
 
-                listener.Start();
+                webListener = new HttpListener();
+                webListener.Prefixes.Add($"http://*:{RelayServerDefaults.WebDashboardPort}/");
+                webListener.Start();
+
+                espListener = new HttpListener();
+                espListener.Prefixes.Add($"http://*:{GetEspListenPort()}/");
+                espListener.Start();
+
                 isServerRunning = true;
-
+                btnServerStart.Enabled = true;
+                btnServerStart.Text = "Stop Server";
                 lbCnctStRGB.Text = "Waiting for ESP32...";
                 lbCnctStRGB.ForeColor = Color.Blue;
 
-                while (isServerRunning)
-                {
-                    HttpListenerContext context = await listener.GetContextAsync();
-                    _ = Task.Run(async () => await ProcessRequest(context));
-                }
+                _ = AcceptLoopAsync(webListener, espPoll: false);
+                _ = AcceptLoopAsync(espListener, espPoll: true);
+
+                await Task.CompletedTask;
             }
             catch (HttpListenerException hEx)
             {
-                MessageBox.Show("Error: " + hEx.Message, "Server Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(
+                    "Error starting HTTP servers. Run as Administrator or register URL ACLs:\n" +
+                    $"netsh http add urlacl url=http://*:{RelayServerDefaults.WebDashboardPort}/ user=Everyone\n" +
+                    $"netsh http add urlacl url=http://*:{GetEspListenPort()}/ user=Everyone\n\n" +
+                    hEx.Message,
+                    "Server Error",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
                 ResetUI();
             }
             catch (Exception ex)
@@ -279,7 +298,31 @@ namespace WinFormsApp3
             }
         }
 
-        private async Task ProcessRequest(HttpListenerContext context)
+        private async Task AcceptLoopAsync(HttpListener activeListener, bool espPoll)
+        {
+            while (isServerRunning)
+            {
+                try
+                {
+                    HttpListenerContext context = await activeListener.GetContextAsync();
+                    _ = Task.Run(async () => await ProcessRequest(context, espPoll));
+                }
+                catch (HttpListenerException) when (!isServerRunning)
+                {
+                    break;
+                }
+                catch (ObjectDisposedException) when (!isServerRunning)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Accept loop error: " + ex.Message);
+                }
+            }
+        }
+
+        private async Task ProcessRequest(HttpListenerContext context, bool espPoll)
         {
             try
             {
@@ -303,9 +346,9 @@ namespace WinFormsApp3
                             Invoke(Apply);
                         else
                             Apply();
-                    }
-                    ,
-                    MarkEsp32Connected);
+                    },
+                    espPoll ? MarkEsp32Connected : () => { },
+                    requireAuth: !espPoll);
             }
             catch (Exception ex) when (ex is ObjectDisposedException || ex is HttpListenerException)
             {
@@ -343,49 +386,59 @@ namespace WinFormsApp3
             watchdogTimer.Stop();
         }
 
+        private void StopListenersOnly()
+        {
+            try { webListener?.Stop(); } catch { }
+            try { webListener?.Close(); } catch { }
+            webListener = null;
+
+            try { espListener?.Stop(); } catch { }
+            try { espListener?.Close(); } catch { }
+            espListener = null;
+        }
+
+        private void StopServers()
+        {
+            isServerRunning = false;
+            StopListenersOnly();
+        }
+
         private void ResetUI()
         {
-            if (this.InvokeRequired)
+            if (InvokeRequired)
             {
-                this.Invoke(new MethodInvoker(ResetUI));
+                Invoke(new MethodInvoker(ResetUI));
                 return;
             }
 
             btnServerStart.Enabled = true;
+            btnServerStart.Text = "Start Server";
             lbCnctStRGB.Text = "Disconnected";
             lbCnctStRGB.ForeColor = Color.Red;
             isServerRunning = false;
-
-            try { listener?.Stop(); } catch { }
+            StopListenersOnly();
         }
 
-        private void ConfigSave()
+        private async void ConfigSave()
         {
             string ip = tbIP.Text.Trim();
-            string port = tbPort.Text.Trim();
+            string port = GetEspListenPort();
 
-            if (string.IsNullOrEmpty(ip) || string.IsNullOrEmpty(port))
+            if (string.IsNullOrEmpty(ip))
             {
-                MessageBox.Show("please enter valip ip address and port number", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Please enter a valid public IP address.", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+
+            tbPort.Text = port;
 
             try
             {
                 bool wasRunning = isServerRunning;
-                if (isServerRunning)
-                {
-                    isServerRunning = false;
-                    listener?.Stop();
-                }
-
-                listener = new HttpListener();
-                listener.Prefixes.Add($"http://*:{port}/");
+                StopServers();
 
                 if (wasRunning)
-                {
-                    _ = ServerStart();
-                }
+                    await StartServersAsync();
             }
             catch (Exception ex)
             {
@@ -406,7 +459,8 @@ namespace WinFormsApp3
             if (TryPushConfigToEsp32(comPort, ip, port, out string espError))
             {
                 MessageBox.Show(
-                    $"Configuration saved on PC and written to ESP32 on {comPort}.",
+                    $"Configuration saved on PC and written to ESP32 on {comPort}.\n" +
+                    $"Device will connect to {ip}:{port} via SIM800L.",
                     "Success",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
